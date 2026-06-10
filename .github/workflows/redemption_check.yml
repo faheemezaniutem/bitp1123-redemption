@@ -103,8 +103,12 @@ jobs:
             echo ">>> Extracted to: $TEMP_EXTRACT"
             echo ">>> Contents: $(ls -1 "$TEMP_EXTRACT" | tr '\n' ' ')"
 
-            # Find the folder that actually contains .cpp files (up to 2 levels deep)
-            CPP_PARENT=$(find "$TEMP_EXTRACT" -maxdepth 2 -name "*.cpp"                          | head -1 | xargs -I{} dirname {})
+            # Find the folder that actually contains .cpp files (up to 3 levels deep)
+            # This student's zip has two levels of nesting:
+            #   TEMP_EXTRACT/B032510498_Set4/B032510498_Set4/*.cpp
+            FIRST_CPP=$(find "$TEMP_EXTRACT" -maxdepth 3 -name "*.cpp" | head -1)
+            echo ">>> First .cpp found: $FIRST_CPP"
+            CPP_PARENT=$(dirname "$FIRST_CPP")
 
             if [ -z "$CPP_PARENT" ]; then
               echo ">>> WARNING: No .cpp files found after extraction."
