@@ -23,25 +23,28 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y g++ python3 python3-pip unzip
 
-      # ── 3. Download grader scripts from lecturer's public repo ─────────────
-      #   ⚠️  LECTURER: Replace YOUR_GITHUB_USERNAME and YOUR_GRADER_REPO below
+      # ── 3. Download grader scripts ─────────────────────────────────────────
+      #   LT1 uses grade_redemption.py + grade_lab_searching.py
+      #   LT2 uses grade_LT1_tolerant.py (standalone, no dependency)
       - name: Download grader scripts
         run: |
           BASE="https://raw.githubusercontent.com/faheemezani/bitp1123-grader/master"
-          curl -fsSL "$BASE/grade_redemption.py"    -o grade_redemption.py
-          curl -fsSL "$BASE/grade_lab_searching.py" -o grade_lab_searching.py
+          curl -fsSL "$BASE/grade_redemption.py"      -o grade_redemption.py
+          curl -fsSL "$BASE/grade_lab_searching.py"   -o grade_lab_searching.py
+          curl -fsSL "$BASE/grade_LT1_tolerant.py"    -o grade_LT1_tolerant.py
 
-      # ── 4. Detect submission type, prepare input, and run grader ──────────
+      # ── 4. Detect submission type and run grader ───────────────────────────
       #
-      #   LT1 redemption → student submits a .zip containing their .cpp files
-      #                     Strategy: try extracted folder first, then raw zip path
-      #   LT2 redemption → student submits LT1_skeleton.cpp directly
-      #                     Pass the .cpp path directly to grader
+      #   LT1 redemption → .zip of cpp files → grade_redemption.py --submissions <dir>
+      #   LT2 redemption → single LT1_skeleton.cpp → grade_LT1_tolerant.py <file>
+      #                     (cap 6.5/7.5 applied in this step)
       #
       - name: Run grader
         id: grader
         run: |
           SUBMISSION_DIR="submission"
+          CAP=6.5
+          MAX=7.5
 
           # ── Find submitted file (ignore the placeholder .txt) ──────────────
           ZIP_FILE=$(find "$SUBMISSION_DIR" -maxdepth 1 -type f -iname "*.zip" | head -1)
@@ -54,143 +57,144 @@ jobs:
               echo ""
               echo "Expected:"
               echo "  LT1 redemption → a .zip file containing your .cpp source files"
-              echo "  LT2 redemption → LT1_skeleton.cpp"
+              echo "  LT2 redemption → your completed LT1_skeleton.cpp file"
               echo "GRADER_EOF"
             } >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
-          # ── Helper: run grader and capture output + exit code ──────────────
-          # NOTE: "|| true" prevents bash -e from aborting when the grader
-          # exits non-zero; we check $GRADER_EXIT ourselves afterwards.
-          run_grader() {
-            local target="$1"
-            local flag="$2"   # "--submissions" for folders/zips, "--feedback" unused here
-            GRADER_OUTPUT=$(python3 grade_redemption.py --submissions "$target" 2>&1) || true
-            GRADER_EXIT=$?
-          }
-
-          # ── Route by file type ─────────────────────────────────────────────
+          # ══════════════════════════════════════════════════════════════════
+          #  LT1 BRANCH — zip → grade_redemption.py --submissions <dir>
+          # ══════════════════════════════════════════════════════════════════
           if [ -n "$ZIP_FILE" ]; then
             echo ">>> Detected LT1 redemption (.zip)"
 
-            # ── Extract zip and normalise folder structure ───────────────────
-            # The grader's find_submission_folders() recognises student folders
-            # only when the folder name is exactly a student ID (e.g. B032510498).
-            # Zip files are often named B032510498_Set4.zip, producing a folder
-            # named B032510498_Set4 — the _SetX suffix breaks detection.
-            # Strategy:
-            #   1. Extract zip into a temp location.
-            #   2. Find the deepest folder that contains .cpp files.
-            #   3. Rename/move that folder to just the student ID.
-            #   4. Pass the parent of that renamed folder as --submissions.
-
             ZIPNAME=$(basename "$ZIP_FILE" .zip)
 
-            # Extract student ID: strip everything after the first non-ID character
-            # Student IDs match [A-Z][0-9]{9,} — capture that prefix only.
+            # Extract student ID: strip _SetX or any suffix after the ID pattern
             STUDENT_ID=$(echo "$ZIPNAME" | grep -oiE '^[A-Z][0-9]{9,}')
             if [ -z "$STUDENT_ID" ]; then
-              STUDENT_ID="$ZIPNAME"   # fallback: use full zip name
+              STUDENT_ID="$ZIPNAME"
             fi
             echo ">>> Student ID: $STUDENT_ID"
 
-            # Extract into a temp folder
+            # Extract zip to a temp folder
             TEMP_EXTRACT="$GITHUB_WORKSPACE/extracted_submission/temp_${ZIPNAME}"
             mkdir -p "$TEMP_EXTRACT"
             unzip -q "$ZIP_FILE" -d "$TEMP_EXTRACT"
-
             echo ">>> Extracted to: $TEMP_EXTRACT"
-            echo ">>> Contents: $(ls -1 "$TEMP_EXTRACT" | tr '\n' ' ')"
+            echo ">>> Top-level contents: $(ls -1 "$TEMP_EXTRACT" | tr '\n' ' ')"
 
-            # Find the folder that actually contains .cpp files (up to 3 levels deep)
-            # This student's zip has two levels of nesting:
-            #   TEMP_EXTRACT/B032510498_Set4/B032510498_Set4/*.cpp
+            # Find the folder containing .cpp files (handles up to 3 levels of nesting)
             FIRST_CPP=$(find "$TEMP_EXTRACT" -maxdepth 3 -name "*.cpp" | head -1)
             echo ">>> First .cpp found: $FIRST_CPP"
             CPP_PARENT=$(dirname "$FIRST_CPP")
+            echo ">>> .cpp parent folder: $CPP_PARENT"
 
-            if [ -z "$CPP_PARENT" ]; then
-              echo ">>> WARNING: No .cpp files found after extraction."
-              CPP_PARENT="$TEMP_EXTRACT"
-            fi
-            echo ">>> .cpp files found in: $CPP_PARENT"
-
-            # Build the submissions root with the student ID as the folder name
-            # Use absolute paths so g++ receives fully-qualified file paths.
+            # Place the cpp-containing folder under the clean student ID name
+            # grade_redemption.py requires folder name = student ID exactly
             SUBMISSIONS_ROOT="$GITHUB_WORKSPACE/extracted_submission/submissions"
             STUDENT_DIR="$SUBMISSIONS_ROOT/$STUDENT_ID"
             mkdir -p "$SUBMISSIONS_ROOT"
-
-            # Copy the cpp-containing folder under the student ID name
             cp -r "$CPP_PARENT/." "$STUDENT_DIR"
-            echo ">>> Prepared student folder: $STUDENT_DIR"
-            echo ">>> Folder contents: $(ls -1 "$STUDENT_DIR" | tr '\n' ' ')"
+            echo ">>> Prepared: $STUDENT_DIR"
+            echo ">>> Contents: $(ls -1 "$STUDENT_DIR" | tr '\n' ' ')"
 
-            # Attempt 1: pass submissions root (absolute) to grader
-            echo ">>> Attempt 1: passing $SUBMISSIONS_ROOT to grader"
-            run_grader "$SUBMISSIONS_ROOT"
+            # Run LT1 grader — capture output without letting bash -e abort on failure
+            GRADER_OUTPUT=$(python3 grade_redemption.py --submissions "$SUBMISSIONS_ROOT" 2>&1) || true
+            GRADER_EXIT=$?
 
             if [ $GRADER_EXIT -ne 0 ]; then
-              echo ">>> Attempt 1 failed (exit $GRADER_EXIT). Retrying with raw zip path..."
-              # Attempt 2: pass raw zip path directly
-              run_grader "$ZIP_FILE"
-            fi
-
-          elif [ -n "$CPP_FILE" ]; then
-            # LT2: grader still expects --submissions <directory>, not a bare .cpp.
-            # Wrap the .cpp inside a student-ID-named folder, same as LT1.
-
-            # LT2 skeleton is always named LT1_skeleton.cpp, but derive student ID
-            # from the filename if possible (e.g. B032510488.cpp), else use "student"
-            CPP_BASENAME=$(basename "$CPP_FILE" .cpp)
-            STUDENT_ID=$(echo "$CPP_BASENAME" | grep -oiE '^[A-Z][0-9]{9,}')
-            if [ -z "$STUDENT_ID" ]; then
-              STUDENT_ID="$CPP_BASENAME"
-            fi
-            echo ">>> Detected LT2 redemption"
-            echo ">>> Student ID: $STUDENT_ID"
-
-            # Check for ___BLANK___ tokens as a sanity signal
-            if grep -q "___BLANK___" "$CPP_FILE"; then
-              echo ">>> ___BLANK___ tokens present — file appears unfilled, proceeding anyway"
+              {
+                echo "result<<GRADER_EOF"
+                echo "⚠️ LT1 grader encountered an error (exit code $GRADER_EXIT)."
+                echo "Please check your zip structure and try again."
+                echo ""
+                echo "--- Grader output ---"
+                echo "$GRADER_OUTPUT"
+                echo "GRADER_EOF"
+              } >> "$GITHUB_OUTPUT"
             else
-              echo ">>> No ___BLANK___ tokens — file appears fully filled in (good)"
+              {
+                echo "result<<GRADER_EOF"
+                echo "$GRADER_OUTPUT"
+                echo "GRADER_EOF"
+              } >> "$GITHUB_OUTPUT"
             fi
 
-            # Wrap .cpp in an absolute student-ID folder for the grader
-            LT2_SUBMISSIONS_ROOT="$GITHUB_WORKSPACE/lt2_submission/submissions"
-            LT2_STUDENT_DIR="$LT2_SUBMISSIONS_ROOT/$STUDENT_ID"
-            mkdir -p "$LT2_STUDENT_DIR"
-            cp "$CPP_FILE" "$LT2_STUDENT_DIR/LT1_skeleton.cpp"
-            echo ">>> Prepared: $LT2_STUDENT_DIR/LT1_skeleton.cpp"
+          # ══════════════════════════════════════════════════════════════════
+          #  LT2 BRANCH — LT1_skeleton.cpp → grade_LT1_tolerant.py <file>
+          #  Marks are out of 100; scaled to /7.5 then capped at 6.5/7.5
+          # ══════════════════════════════════════════════════════════════════
+          elif [ -n "$CPP_FILE" ]; then
+            echo ">>> Detected LT2 redemption (.cpp)"
 
-            run_grader "$LT2_SUBMISSIONS_ROOT"
-          fi
+            # Sanity: count remaining unfilled blanks in code sections
+            BLANK_COUNT=$(grep -o "___BLANK___" "$CPP_FILE" | wc -l)
+            if [ "$BLANK_COUNT" -gt 0 ]; then
+              echo ">>> NOTE: $BLANK_COUNT unfilled ___BLANK___ token(s) remain. Tolerant grader will patch them."
+            else
+              echo ">>> All blanks appear filled — good."
+            fi
 
-          # ── Write result to GITHUB_OUTPUT ─────────────────────────────────
-          if [ $GRADER_EXIT -ne 0 ]; then
-            {
-              echo "result<<GRADER_EOF"
-              echo "⚠️ Grader encountered an error (exit code $GRADER_EXIT)."
-              echo "Please check your submission structure and try again."
-              echo ""
-              echo "--- Grader output ---"
-              echo "$GRADER_OUTPUT"
-              echo "GRADER_EOF"
-            } >> "$GITHUB_OUTPUT"
-          else
-            {
-              echo "result<<GRADER_EOF"
-              echo "$GRADER_OUTPUT"
-              echo "GRADER_EOF"
-            } >> "$GITHUB_OUTPUT"
+            # Run the tolerant LT1 grader directly on the single .cpp file
+            # Positional argument only — no --submissions flag
+            GRADER_OUTPUT=$(python3 grade_LT1_tolerant.py "$CPP_FILE" 2>&1) || true
+            GRADER_EXIT=$?
+
+            if [ $GRADER_EXIT -ne 0 ]; then
+              {
+                echo "result<<GRADER_EOF"
+                echo "⚠️ LT2 grader encountered an error (exit code $GRADER_EXIT)."
+                echo ""
+                echo "--- Grader output ---"
+                echo "$GRADER_OUTPUT"
+                echo "GRADER_EOF"
+              } >> "$GITHUB_OUTPUT"
+            else
+              # Parse the TOTAL line: "  TOTAL                    :  XX/100  [grade]"
+              RAW=$(echo "$GRADER_OUTPUT" | grep -oP 'TOTAL\s*:\s*\K[0-9]+(?=/100)' | head -1)
+
+              if [ -z "$RAW" ]; then
+                {
+                  echo "result<<GRADER_EOF"
+                  echo "⚠️ Could not parse total mark from grader output."
+                  echo ""
+                  echo "$GRADER_OUTPUT"
+                  echo "GRADER_EOF"
+                } >> "$GITHUB_OUTPUT"
+              else
+                # Scale: raw/100 × 7.5, cap at 6.5
+                SCALED=$(python3 -c "
+raw=$RAW
+scaled = round(raw / 100 * 7.5, 2)
+capped = min(scaled, 6.5)
+cap_label = 'Capped at redemption limit' if scaled > 6.5 else 'Within cap'
+print(f'Raw score  : {raw}/100')
+print(f'Scaled     : {scaled:.2f}/7.5')
+print(f'Redeemed   : {capped:.2f}/7.5  ({cap_label})')
+")
+                {
+                  echo "result<<GRADER_EOF"
+                  echo "============================================================"
+                  echo "REDEMPTION GRADING [LT2]"
+                  echo "Cap : 6.5/7.5"
+                  echo "============================================================"
+                  echo ""
+                  echo "$SCALED"
+                  echo ""
+                  echo "------------------------------------------------------------"
+                  echo "DETAIL:"
+                  echo "$GRADER_OUTPUT"
+                  echo "GRADER_EOF"
+                } >> "$GITHUB_OUTPUT"
+              fi
+            fi
           fi
 
       # ── 5. Post result as a commit comment (always, even on grader error) ──
-      # NOTE: grader output is passed via env var (GRADER_RESULT) rather than
-      # inline template literal interpolation, to avoid JS syntax errors when
-      # the output contains backticks, dollar signs, or other special characters.
+      # Grader output is passed via env var to avoid JS syntax errors from
+      # special characters (backticks, $, etc.) in the output.
       - name: Post commit comment
         if: always()
         uses: actions/github-script@v7
