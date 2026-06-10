@@ -61,9 +61,11 @@ jobs:
           fi
 
           # ── Helper: run grader and capture output + exit code ──────────────
+          # NOTE: "|| true" prevents bash -e from aborting when the grader
+          # exits non-zero; we check $GRADER_EXIT ourselves afterwards.
           run_grader() {
             local target="$1"
-            GRADER_OUTPUT=$(python3 grade_redemption.py "$target" 2>&1)
+            GRADER_OUTPUT=$(python3 grade_redemption.py "$target" 2>&1) || true
             GRADER_EXIT=$?
           }
 
