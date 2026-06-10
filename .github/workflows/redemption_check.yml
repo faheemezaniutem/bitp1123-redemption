@@ -74,53 +74,57 @@ jobs:
           if [ -n "$ZIP_FILE" ]; then
             echo ">>> Detected LT1 redemption (.zip)"
 
-            # Extract zip into a named student folder
+            # ── Extract zip and normalise folder structure ───────────────────
+            # The grader's find_submission_folders() recognises student folders
+            # only when the folder name is exactly a student ID (e.g. B032510498).
+            # Zip files are often named B032510498_Set4.zip, producing a folder
+            # named B032510498_Set4 — the _SetX suffix breaks detection.
+            # Strategy:
+            #   1. Extract zip into a temp location.
+            #   2. Find the deepest folder that contains .cpp files.
+            #   3. Rename/move that folder to just the student ID.
+            #   4. Pass the parent of that renamed folder as --submissions.
+
             ZIPNAME=$(basename "$ZIP_FILE" .zip)
-            EXTRACT_DIR="extracted_submission/${ZIPNAME}"
-            mkdir -p "$EXTRACT_DIR"
-            unzip -q "$ZIP_FILE" -d "$EXTRACT_DIR"
 
-            echo ">>> Extracted to: $EXTRACT_DIR"
-            echo ">>> Contents: $(ls -1 "$EXTRACT_DIR" | tr '\n' ' ')"
-
-            # ── Resolve the correct path to pass to --submissions ────────────
-            # grade_redemption.py expects a Moodle-style parent folder:
-            #   SUBMISSIONS_DIR/
-            #     └── B032510498_Set4/   ← student folder
-            #             ├── Binary.cpp
-            #             └── ...
-            #
-            # Case A: zip extracted flat  → extracted_submission/B032510498_Set4/*.cpp
-            #         --submissions should be: extracted_submission/B032510498_Set4/  (EXTRACT_DIR)
-            #         but grader needs a parent, so wrap it: use extracted_submission/
-            #
-            # Case B: zip has nested folder → extracted_submission/B032510498_Set4/B032510498_Set4/*.cpp
-            #         --submissions should be: extracted_submission/B032510498_Set4/  (EXTRACT_DIR, pre-unwrap)
-            #
-            # In both cases the correct value for --submissions is EXTRACT_DIR
-            # BEFORE any unwrapping — it is the parent that contains the student folder.
-
-            SUBMISSIONS_TARGET="$EXTRACT_DIR"
-
-            CPP_AT_ROOT=$(find "$EXTRACT_DIR" -maxdepth 1 -type f -iname "*.cpp" | wc -l)
-            SUBFOLDER_COUNT=$(find "$EXTRACT_DIR" -maxdepth 1 -mindepth 1 -type d | wc -l)
-
-            if [ "$CPP_AT_ROOT" -eq 0 ] && [ "$SUBFOLDER_COUNT" -eq 1 ]; then
-              # Nested layout — EXTRACT_DIR is already the correct parent for --submissions
-              INNER_DIR=$(find "$EXTRACT_DIR" -maxdepth 1 -mindepth 1 -type d | head -1)
-              echo ">>> Detected nested folder: $INNER_DIR"
-              echo ">>> Passing parent folder to grader: $SUBMISSIONS_TARGET"
-            else
-              # Flat layout — .cpp files are directly in EXTRACT_DIR.
-              # Grader needs a parent, so use extracted_submission/ as the submissions root.
-              SUBMISSIONS_TARGET="extracted_submission"
-              echo ">>> Flat layout detected."
-              echo ">>> Passing parent folder to grader: $SUBMISSIONS_TARGET"
+            # Extract student ID: strip everything after the first non-ID character
+            # Student IDs match [A-Z][0-9]{9,} — capture that prefix only.
+            STUDENT_ID=$(echo "$ZIPNAME" | grep -oiE '^[A-Z][0-9]{9,}')
+            if [ -z "$STUDENT_ID" ]; then
+              STUDENT_ID="$ZIPNAME"   # fallback: use full zip name
             fi
+            echo ">>> Student ID: $STUDENT_ID"
 
-            # Attempt 1: pass resolved submissions parent folder
-            echo ">>> Attempt 1: passing submissions folder to grader"
-            run_grader "$SUBMISSIONS_TARGET"
+            # Extract into a temp folder
+            TEMP_EXTRACT="extracted_submission/temp_${ZIPNAME}"
+            mkdir -p "$TEMP_EXTRACT"
+            unzip -q "$ZIP_FILE" -d "$TEMP_EXTRACT"
+
+            echo ">>> Extracted to: $TEMP_EXTRACT"
+            echo ">>> Contents: $(ls -1 "$TEMP_EXTRACT" | tr '\n' ' ')"
+
+            # Find the folder that actually contains .cpp files (up to 2 levels deep)
+            CPP_PARENT=$(find "$TEMP_EXTRACT" -maxdepth 2 -name "*.cpp"                          | head -1 | xargs -I{} dirname {})
+
+            if [ -z "$CPP_PARENT" ]; then
+              echo ">>> WARNING: No .cpp files found after extraction."
+              CPP_PARENT="$TEMP_EXTRACT"
+            fi
+            echo ">>> .cpp files found in: $CPP_PARENT"
+
+            # Build the submissions root with the student ID as the folder name
+            SUBMISSIONS_ROOT="extracted_submission/submissions"
+            STUDENT_DIR="$SUBMISSIONS_ROOT/$STUDENT_ID"
+            mkdir -p "$SUBMISSIONS_ROOT"
+
+            # Move the cpp-containing folder to STUDENT_ID name
+            cp -r "$CPP_PARENT" "$STUDENT_DIR"
+            echo ">>> Prepared student folder: $STUDENT_DIR"
+            echo ">>> Folder contents: $(ls -1 "$STUDENT_DIR" | tr '\n' ' ')"
+
+            # Attempt 1: pass submissions root to grader
+            echo ">>> Attempt 1: passing $SUBMISSIONS_ROOT to grader"
+            run_grader "$SUBMISSIONS_ROOT"
 
             if [ $GRADER_EXIT -ne 0 ]; then
               echo ">>> Attempt 1 failed (exit $GRADER_EXIT). Retrying with raw zip path..."
