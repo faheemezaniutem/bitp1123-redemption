@@ -138,14 +138,34 @@ jobs:
             fi
 
           elif [ -n "$CPP_FILE" ]; then
-            # LT2: check for ___BLANK___ tokens as a sanity signal
-            if grep -q "___BLANK___" "$CPP_FILE"; then
-              echo ">>> Detected LT2 redemption (.cpp with ___BLANK___ tokens)"
-            else
-              echo ">>> WARNING: .cpp file found but no ___BLANK___ tokens detected."
-              echo ">>> Proceeding as LT2 submission; grader will report any issues."
+            # LT2: grader still expects --submissions <directory>, not a bare .cpp.
+            # Wrap the .cpp inside a student-ID-named folder, same as LT1.
+
+            # LT2 skeleton is always named LT1_skeleton.cpp, but derive student ID
+            # from the filename if possible (e.g. B032510488.cpp), else use "student"
+            CPP_BASENAME=$(basename "$CPP_FILE" .cpp)
+            STUDENT_ID=$(echo "$CPP_BASENAME" | grep -oiE '^[A-Z][0-9]{9,}')
+            if [ -z "$STUDENT_ID" ]; then
+              STUDENT_ID="$CPP_BASENAME"
             fi
-            run_grader "$CPP_FILE"
+            echo ">>> Detected LT2 redemption"
+            echo ">>> Student ID: $STUDENT_ID"
+
+            # Check for ___BLANK___ tokens as a sanity signal
+            if grep -q "___BLANK___" "$CPP_FILE"; then
+              echo ">>> ___BLANK___ tokens present — file appears unfilled, proceeding anyway"
+            else
+              echo ">>> No ___BLANK___ tokens — file appears fully filled in (good)"
+            fi
+
+            # Wrap .cpp in an absolute student-ID folder for the grader
+            LT2_SUBMISSIONS_ROOT="$GITHUB_WORKSPACE/lt2_submission/submissions"
+            LT2_STUDENT_DIR="$LT2_SUBMISSIONS_ROOT/$STUDENT_ID"
+            mkdir -p "$LT2_STUDENT_DIR"
+            cp "$CPP_FILE" "$LT2_STUDENT_DIR/LT1_skeleton.cpp"
+            echo ">>> Prepared: $LT2_STUDENT_DIR/LT1_skeleton.cpp"
+
+            run_grader "$LT2_SUBMISSIONS_ROOT"
           fi
 
           # ── Write result to GITHUB_OUTPUT ─────────────────────────────────
