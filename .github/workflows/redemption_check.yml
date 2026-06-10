@@ -96,7 +96,7 @@ jobs:
             echo ">>> Student ID: $STUDENT_ID"
 
             # Extract into a temp folder
-            TEMP_EXTRACT="extracted_submission/temp_${ZIPNAME}"
+            TEMP_EXTRACT="$GITHUB_WORKSPACE/extracted_submission/temp_${ZIPNAME}"
             mkdir -p "$TEMP_EXTRACT"
             unzip -q "$ZIP_FILE" -d "$TEMP_EXTRACT"
 
@@ -117,16 +117,17 @@ jobs:
             echo ">>> .cpp files found in: $CPP_PARENT"
 
             # Build the submissions root with the student ID as the folder name
-            SUBMISSIONS_ROOT="extracted_submission/submissions"
+            # Use absolute paths so g++ receives fully-qualified file paths.
+            SUBMISSIONS_ROOT="$GITHUB_WORKSPACE/extracted_submission/submissions"
             STUDENT_DIR="$SUBMISSIONS_ROOT/$STUDENT_ID"
             mkdir -p "$SUBMISSIONS_ROOT"
 
-            # Move the cpp-containing folder to STUDENT_ID name
-            cp -r "$CPP_PARENT" "$STUDENT_DIR"
+            # Copy the cpp-containing folder under the student ID name
+            cp -r "$CPP_PARENT/." "$STUDENT_DIR"
             echo ">>> Prepared student folder: $STUDENT_DIR"
             echo ">>> Folder contents: $(ls -1 "$STUDENT_DIR" | tr '\n' ' ')"
 
-            # Attempt 1: pass submissions root to grader
+            # Attempt 1: pass submissions root (absolute) to grader
             echo ">>> Attempt 1: passing $SUBMISSIONS_ROOT to grader"
             run_grader "$SUBMISSIONS_ROOT"
 
