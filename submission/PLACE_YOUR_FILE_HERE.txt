@@ -1,8 +1,0 @@
-Delete this file and place your submission file here.
-
-Your file should be:
-  - LT1 redemption: a .zip file containing your .cpp source files
-                    e.g. B012345678.zip
-  - LT2 redemption: your completed LT1_skeleton.cpp file
-
-Only ONE file at a time in this folder.
