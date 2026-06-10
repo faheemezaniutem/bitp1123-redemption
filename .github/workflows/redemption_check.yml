@@ -4,6 +4,7 @@ on:
   push:
     paths:
       - 'submission/**'
+  workflow_dispatch:  # enables the "Run workflow" button in the GitHub Actions UI
 
 jobs:
   grade:
@@ -26,7 +27,7 @@ jobs:
       #   ⚠️  LECTURER: Replace YOUR_GITHUB_USERNAME and YOUR_GRADER_REPO below
       - name: Download grader scripts
         run: |
-          BASE="https://raw.githubusercontent.com/faheemezani/bitp1123-grader/master"
+          BASE="https://raw.githubusercontent.com/YOUR_GITHUB_USERNAME/YOUR_GRADER_REPO/main"
           curl -fsSL "$BASE/grade_redemption.py"    -o grade_redemption.py
           curl -fsSL "$BASE/grade_lab_searching.py" -o grade_lab_searching.py
 
