@@ -14,7 +14,7 @@ jobs:
     steps:
       # ── 1. Checkout student's repo ─────────────────────────────────────────
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v4.2.2
 
       # ── 2. Set up Python & g++ ─────────────────────────────────────────────
       - name: Set up environment
@@ -26,14 +26,16 @@ jobs:
       #   ⚠️  LECTURER: Replace YOUR_GITHUB_USERNAME and YOUR_GRADER_REPO below
       - name: Download grader scripts
         run: |
-          BASE="https://raw.githubusercontent.com/faheemezani/bitp1123-grader/master"
+          BASE="https://raw.githubusercontent.com/YOUR_GITHUB_USERNAME/YOUR_GRADER_REPO/main"
           curl -fsSL "$BASE/grade_redemption.py"    -o grade_redemption.py
           curl -fsSL "$BASE/grade_lab_searching.py" -o grade_lab_searching.py
 
-      # ── 4. Detect submission type and run grader ───────────────────────────
+      # ── 4. Detect submission type, prepare input, and run grader ──────────
       #
       #   LT1 redemption → student submits a .zip containing their .cpp files
+      #                     Strategy: try extracted folder first, then raw zip path
       #   LT2 redemption → student submits LT1_skeleton.cpp directly
+      #                     Pass the .cpp path directly to grader
       #
       - name: Run grader
         id: grader
@@ -57,33 +59,69 @@ jobs:
             exit 0
           fi
 
-          # ── Route: .zip → LT1, .cpp → LT2 ────────────────────────────────
+          # ── Helper: run grader and capture output + exit code ──────────────
+          run_grader() {
+            local target="$1"
+            GRADER_OUTPUT=$(python3 grade_redemption.py "$target" 2>&1)
+            GRADER_EXIT=$?
+          }
+
+          # ── Route by file type ─────────────────────────────────────────────
           if [ -n "$ZIP_FILE" ]; then
             echo ">>> Detected LT1 redemption (.zip)"
-            TARGET="$ZIP_FILE"
+
+            # Extract zip into a named student folder
+            ZIPNAME=$(basename "$ZIP_FILE" .zip)
+            EXTRACT_DIR="extracted_submission/${ZIPNAME}"
+            mkdir -p "$EXTRACT_DIR"
+            unzip -q "$ZIP_FILE" -d "$EXTRACT_DIR"
+
+            echo ">>> Extracted to: $EXTRACT_DIR"
+            echo ">>> Contents: $(ls -1 "$EXTRACT_DIR" | tr '\n' ' ')"
+
+            # Attempt 1: pass extracted folder (Moodle-style layout)
+            echo ">>> Attempt 1: passing extracted folder to grader"
+            run_grader "$EXTRACT_DIR"
+
+            if [ $GRADER_EXIT -ne 0 ]; then
+              echo ">>> Attempt 1 failed (exit $GRADER_EXIT). Retrying with raw zip path..."
+              # Attempt 2: pass raw zip path directly
+              run_grader "$ZIP_FILE"
+            fi
 
           elif [ -n "$CPP_FILE" ]; then
-            # Double-check: LT2 skeleton contains ___BLANK___ tokens
+            # LT2: check for ___BLANK___ tokens as a sanity signal
             if grep -q "___BLANK___" "$CPP_FILE"; then
               echo ">>> Detected LT2 redemption (.cpp with ___BLANK___ tokens)"
             else
               echo ">>> WARNING: .cpp file found but no ___BLANK___ tokens detected."
               echo ">>> Proceeding as LT2 submission; grader will report any issues."
             fi
-            TARGET="$CPP_FILE"
+            run_grader "$CPP_FILE"
           fi
 
-          # ── Run the redemption grader; capture stdout + stderr ─────────────
-          OUTPUT=$(python3 grade_redemption.py "$TARGET" 2>&1)
+          # ── Write result to GITHUB_OUTPUT ─────────────────────────────────
+          if [ $GRADER_EXIT -ne 0 ]; then
+            {
+              echo "result<<GRADER_EOF"
+              echo "⚠️ Grader encountered an error (exit code $GRADER_EXIT)."
+              echo "Please check your submission structure and try again."
+              echo ""
+              echo "--- Grader output ---"
+              echo "$GRADER_OUTPUT"
+              echo "GRADER_EOF"
+            } >> "$GITHUB_OUTPUT"
+          else
+            {
+              echo "result<<GRADER_EOF"
+              echo "$GRADER_OUTPUT"
+              echo "GRADER_EOF"
+            } >> "$GITHUB_OUTPUT"
+          fi
 
-          {
-            echo "result<<GRADER_EOF"
-            echo "$OUTPUT"
-            echo "GRADER_EOF"
-          } >> "$GITHUB_OUTPUT"
-
-      # ── 5. Post result as a commit comment ────────────────────────────────
+      # ── 5. Post result as a commit comment (always, even on grader error) ──
       - name: Post commit comment
+        if: always()
         uses: actions/github-script@v7
         with:
           script: |
@@ -92,7 +130,7 @@ jobs:
               '## 🎓 BITP1123 Redemption Self-Check',
               '',
               '```',
-              result,
+              result || '(no output captured — check the Actions log for details)',
               '```',
               '',
               '_This is an automated check. Final marks are determined by your lecturer._',
