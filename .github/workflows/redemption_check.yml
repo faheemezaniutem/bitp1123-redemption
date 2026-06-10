@@ -27,7 +27,7 @@ jobs:
       #   ⚠️  LECTURER: Replace YOUR_GITHUB_USERNAME and YOUR_GRADER_REPO below
       - name: Download grader scripts
         run: |
-          BASE="https://raw.githubusercontent.com/faheemezani/bitp1123-grader/master"
+          BASE="https://raw.githubusercontent.com/faheemezani/bitp-1123/master"
           curl -fsSL "$BASE/grade_redemption.py"    -o grade_redemption.py
           curl -fsSL "$BASE/grade_lab_searching.py" -o grade_lab_searching.py
 
@@ -65,7 +65,8 @@ jobs:
           # exits non-zero; we check $GRADER_EXIT ourselves afterwards.
           run_grader() {
             local target="$1"
-            GRADER_OUTPUT=$(python3 grade_redemption.py "$target" 2>&1) || true
+            local flag="$2"   # "--submissions" for folders/zips, "--feedback" unused here
+            GRADER_OUTPUT=$(python3 grade_redemption.py --submissions "$target" 2>&1) || true
             GRADER_EXIT=$?
           }
 
@@ -137,17 +138,23 @@ jobs:
           fi
 
       # ── 5. Post result as a commit comment (always, even on grader error) ──
+      # NOTE: grader output is passed via env var (GRADER_RESULT) rather than
+      # inline template literal interpolation, to avoid JS syntax errors when
+      # the output contains backticks, dollar signs, or other special characters.
       - name: Post commit comment
         if: always()
         uses: actions/github-script@v7
+        env:
+          GRADER_RESULT: ${{ steps.grader.outputs.result }}
         with:
           script: |
-            const result = `${{ steps.grader.outputs.result }}`;
+            const result = process.env.GRADER_RESULT
+              || '(no output captured — check the Actions log for details)';
             const body = [
               '## 🎓 BITP1123 Redemption Self-Check',
               '',
               '```',
-              result || '(no output captured — check the Actions log for details)',
+              result,
               '```',
               '',
               '_This is an automated check. Final marks are determined by your lecturer._',
