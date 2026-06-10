@@ -80,6 +80,20 @@ jobs:
             echo ">>> Extracted to: $EXTRACT_DIR"
             echo ">>> Contents: $(ls -1 "$EXTRACT_DIR" | tr '\n' ' ')"
 
+            # ── Unwrap single-level nesting ──────────────────────────────────
+            # Some students zip their files inside a subfolder, e.g.:
+            #   B032510498_Set4.zip → B032510498_Set4/ → B032510498_Set4/ → *.cpp
+            # Detect this and unwrap one level so the grader sees the .cpp files.
+            CPP_AT_ROOT=$(find "$EXTRACT_DIR" -maxdepth 1 -type f -iname "*.cpp" | wc -l)
+            SUBFOLDER_COUNT=$(find "$EXTRACT_DIR" -maxdepth 1 -mindepth 1 -type d | wc -l)
+
+            if [ "$CPP_AT_ROOT" -eq 0 ] && [ "$SUBFOLDER_COUNT" -eq 1 ]; then
+              INNER_DIR=$(find "$EXTRACT_DIR" -maxdepth 1 -mindepth 1 -type d | head -1)
+              echo ">>> Detected nested folder — unwrapping to: $INNER_DIR"
+              EXTRACT_DIR="$INNER_DIR"
+              echo ">>> Unwrapped contents: $(ls -1 "$EXTRACT_DIR" | tr '\n' ' ')"
+            fi
+
             # Attempt 1: pass extracted folder (Moodle-style layout)
             echo ">>> Attempt 1: passing extracted folder to grader"
             run_grader "$EXTRACT_DIR"
